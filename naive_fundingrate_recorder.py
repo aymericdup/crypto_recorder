@@ -108,17 +108,17 @@ class NaiveFundingRateRecorder():
         self.gateway_ccxt = {}
 
         for exchange in exchanges:
-            #if exchange == "hyperliquid" : self.mappings_collector[exchange] = [self.collect_ticks_hyperliquid, self.collect_mids_hyperliquid, self.collect_hyperliquid_fr] # #
-            if exchange == "hyperliquid" : self.mappings_collector[exchange] = [self.collect_hyperliquid_fr]
-            #if exchange == "paradex" : self.mappings_collector[exchange] = [self.collect_ticks_paradex, self.collect_mids_paradex, self.collect_paradex_fr]
-            if exchange == "paradex" : self.mappings_collector[exchange] = [self.collect_paradex_fr]
+            if exchange == "hyperliquid" : self.mappings_collector[exchange] = [self.collect_ticks_hyperliquid, self.collect_mids_hyperliquid, self.collect_hyperliquid_fr] # #
+            #if exchange == "hyperliquid" : self.mappings_collector[exchange] = [self.collect_hyperliquid_fr]
+            if exchange == "paradex" : self.mappings_collector[exchange] = [self.collect_ticks_paradex, self.collect_mids_paradex, self.collect_paradex_fr]
+            #if exchange == "paradex" : self.mappings_collector[exchange] = [self.collect_paradex_fr]
 
             #if exchange == "woox" : self.mappings_collector[exchange] = [self.collect_woox_fr]
             if exchange == "woofipro": 
                 self.gateway_ccxt[exchange] = ccxt.pro.woofipro({'apiKey': self.ccxt_keys[exchange]['key'], 'secret': self.ccxt_keys[exchange]['secret'], 'enableRateLimit': True, })
                 self.mappings_collector[exchange] = [self.start_sequential_ccxt_jobs] # essentially in order to run properly each jobs without websocket conflict
-                #self.ccxt_exchange_jobs[exchange] = [self.collect_mids_woofipro, self.collect_ticks_woofipro, self.collect_woofipro_fr]
-                self.ccxt_exchange_jobs[exchange] = [self.collect_woofipro_fr]
+                self.ccxt_exchange_jobs[exchange] = [self.collect_mids_woofipro, self.collect_ticks_woofipro, self.collect_woofipro_fr]
+                #self.ccxt_exchange_jobs[exchange] = [self.collect_woofipro_fr]
             #if exchange == "woox" : self.mappings_collector[exchange] = [self.collect_ticks_paradex, self.collect_mids_paradex, self.collect_paradex_fr]
             #if exchange == "paradex" : self.mappings_collector[exchange] = [self.collect_ticks_paradex]
             file_helper.ensure_data_directory(exchange)
