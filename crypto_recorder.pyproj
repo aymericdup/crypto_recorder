@@ -30,6 +30,9 @@
     <Compile Include="naive_fundingrate_recorder.py" />
     <Compile Include="paradex_conn.py" />
     <Compile Include="test.py" />
+    <Compile Include="utils\file_helper.py" />
+    <Compile Include="utils\number_helper.py" />
+    <Compile Include="utils\__init__.py" />
   </ItemGroup>
   <ItemGroup>
     <Content Include=".env" />
@@ -53,6 +56,9 @@
       <PathEnvironmentVariable>PYTHONPATH</PathEnvironmentVariable>
       <Architecture>X64</Architecture>
     </Interpreter>
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="utils\" />
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />
   <!-- Uncomment the CoreCompile target to enable the Build command in

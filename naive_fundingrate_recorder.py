@@ -20,13 +20,16 @@ import math
 import ccxt
 import ccxt.pro
 
+from utils import file_helper, number_helper
+
 LOG_LEVEL = logging.INFO
 LOG_FILE = "naive_fundingrate_recorder.log"
 DATA_DIR = "live_fr"
 INTERVAL_FUNDINGRATE_SECONDS = 60
 INTERVAL_MIDS_SECONDS = 30
+INTERVAL_BUFFER_INFO = 300
 HEADERS = ["datetime", "base_currency", "symbol", "funding_rate", "ask", "bid", "mid",
-    "mark", "oi", "volume_24h", "underlying_price", "premium", "oracle", "dayNtlVlm"]
+    "mark", "oi", "volume_24h", "underlying_price", "premium", "oracle", "dayNtlVlm", "funding_rate_adj", "fr_freq"]
 
 # --- Logger Setup ---
 def setup_logging():
@@ -50,17 +53,6 @@ import quantpylib
 from quantpylib.gateway.master import Gateway
 from quantpylib.utilities.cringbuffer_docs import RingBuffer
 from quantpylib.wrappers.paradex import endpoints as paradex_endpoints
-
-def is_valid_decimal(value):
-    """Check if string is filled and can be parsed as decimal"""
-    if not value or not value.strip():  # Check if empty or whitespace
-        return False
-    
-    try:
-        Decimal(value.strip())
-        return True
-    except (InvalidOperation, ValueError):
-        return False
 
 def get_ccxt_keys():
     return {
@@ -89,70 +81,6 @@ def get_gateway_keys():
     }
     return config_keys
 
-def ensure_data_directory(exch, suffix=None):
-    """Ensures the data directory exists."""
-    path = f"{exch}_data" if suffix is None else f"{exch}_data/{suffix}"
-    if not os.path.exists(path):
-        os.makedirs(path)
-        logger.info(f"Created data directory: {path}")
-
-def get_csv_filename(exch, suffix, tz= timezone.utc):
-        """Generates a CSV filename based on the current date (YYYY-MM-DD)."""
-        # Get the current date and format it as YYYY-MM-DD
-        today_str = datetime.fromtimestamp(time.time(), tz=tz).strftime("%Y-%m-%d")
-        # Construct the full path for the CSV file
-        return os.path.join(f"{exch}_data/{suffix}", f"{exch}_{today_str}.csv")
-
-def get_parquet_filename(exch, suffix, tz= timezone.utc):
-    today_str = datetime.fromtimestamp(time.time(), tz=tz).strftime("%Y-%m-%d")
-    #return os.path.join(f"{exch}_data", f"{exch}_{suffix}_{today_str}.parquet")
-    return os.path.join(f"{exch}_data/{suffix}", f"{exch}_{suffix}_{today_str}.parquet")
-
-def write_to_csv(exch, data, headers, suffix):
-        """
-        Writes a dictionary of data to a CSV file.
-        It expects 'data' to be a dictionary where keys are column headers.
-        You might need to adjust this function based on the actual structure
-        of the data returned by the Loris API.
-        """
-        filename = get_csv_filename(exch, suffix)
-        file_exists = os.path.exists(filename)
-    
-        if not data:
-            logger.warning("No data to write to CSV.")
-            return
-    
-        try:
-            with open(filename, 'a', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=headers)
-            
-                if not file_exists:
-                    writer.writeheader()  # Write header only if the file is new
-                    logger.info(f"Created new CSV file: {filename} with headers: {headers}")
-            
-                for data_raw in data: writer.writerow(data_raw)
-                logger.info(f"Data successfully written to {filename}.")
-        except IOError as e:
-            logger.error(f"Error writing to CSV file {filename}: {e}")
-        except Exception as e:
-            logger.error(f"An unexpected error occurred while writing data to CSV: {e}")
-
-def append_to_parquetfile(file_path, exch, data, schema, partition_cols, dataFormaterFct):
-    #sucess = False
-    try:
-        if not data: return
-
-        df = dataFormaterFct(data)
-        pq.write_to_dataset(
-            df,
-            root_path=file_path,
-            partition_cols=partition_cols
-            )
-        logger.info(f"[{exch}]: Batch written successfully.")
-        #sucess = True
-    except Exception as e: logger.error(f"write_to_parquetfile: an unexpected error occurred while writing data to parquet file: {e}")
-    #finally: return sucess
-
 async def wait_for_next_minute(delay=0):
     now = datetime.now()
     seconds_to_wait = (60 - delay) - (now.second + (now.microsecond / 1_000_000))
@@ -175,23 +103,30 @@ class NaiveFundingRateRecorder():
         self.ccxt_keys = ccxt_keys
         self.ccxt_exchange_jobs = {}
         self.ccxt_exchange_tasks = {}
+        self.symbols_info = {} # exchange => symbols => symbol information according what the exchange allows
 
         self.gateway_ccxt = {}
 
         for exchange in exchanges:
-            if exchange == "hyperliquid" : self.mappings_collector[exchange] = [self.collect_ticks_hyperliquid, self.collect_mids_hyperliquid, self.collect_hyperliquid_fr] # #
-            if exchange == "paradex" : self.mappings_collector[exchange] = [self.collect_ticks_paradex, self.collect_mids_paradex, self.collect_paradex_fr]
+            #if exchange == "hyperliquid" : self.mappings_collector[exchange] = [self.collect_ticks_hyperliquid, self.collect_mids_hyperliquid, self.collect_hyperliquid_fr] # #
+            if exchange == "hyperliquid" : self.mappings_collector[exchange] = [self.collect_hyperliquid_fr]
+            #if exchange == "paradex" : self.mappings_collector[exchange] = [self.collect_ticks_paradex, self.collect_mids_paradex, self.collect_paradex_fr]
+            if exchange == "paradex" : self.mappings_collector[exchange] = [self.collect_paradex_fr]
+
             #if exchange == "woox" : self.mappings_collector[exchange] = [self.collect_woox_fr]
             if exchange == "woofipro": 
                 self.gateway_ccxt[exchange] = ccxt.pro.woofipro({'apiKey': self.ccxt_keys[exchange]['key'], 'secret': self.ccxt_keys[exchange]['secret'], 'enableRateLimit': True, })
                 self.mappings_collector[exchange] = [self.start_sequential_ccxt_jobs] # essentially in order to run properly each jobs without websocket conflict
-                self.ccxt_exchange_jobs[exchange] = [self.collect_mids_woofipro, self.collect_ticks_woofipro, self.collect_woofipro_fr]#, self.collect_ticks_woofipro] #self.collect_woofipro_fr]
+                #self.ccxt_exchange_jobs[exchange] = [self.collect_mids_woofipro, self.collect_ticks_woofipro, self.collect_woofipro_fr]
+                self.ccxt_exchange_jobs[exchange] = [self.collect_woofipro_fr]
             #if exchange == "woox" : self.mappings_collector[exchange] = [self.collect_ticks_paradex, self.collect_mids_paradex, self.collect_paradex_fr]
             #if exchange == "paradex" : self.mappings_collector[exchange] = [self.collect_ticks_paradex]
-            ensure_data_directory(exchange)
-            ensure_data_directory(exchange, "tick")
-            ensure_data_directory(exchange, "mid")
-            ensure_data_directory(exchange, "fr")
+            file_helper.ensure_data_directory(exchange)
+            file_helper.ensure_data_directory(exchange, "tick")
+            file_helper.ensure_data_directory(exchange, "mid")
+            file_helper.ensure_data_directory(exchange, "fr")
+
+            self.symbols_info[exchange] = {}
 
     async def start_sequential_ccxt_jobs(self, exch):
         try:
@@ -267,14 +202,14 @@ class NaiveFundingRateRecorder():
             ticks_buffer.append(tick_data[1])
 
             call_time = time.monotonic()
-            if (call_time - last_call_time) > 60*2: 
+            if (call_time - last_call_time) > INTERVAL_BUFFER_INFO: 
                 logger.info(f"_consume_ticks_data: Buffer sizing[{exch}] {len(ticks_buffer)}/{self.batch_tick_size} mid(s) {(len(ticks_buffer)*100.0)/self.batch_tick_size}%")
                 last_call_time = call_time
 
             if not force_flush and len(ticks_buffer) < self.batch_tick_size: continue # Check if the buffer is ready to be written
 
             logger.info(f"_consume_tick_data: Buffer full, writing a batch of {len(ticks_buffer)} ticks exch:{exch}...")
-            file_path = get_parquet_filename(exch, "tick")
+            file_path = file_helper.get_parquet_filename(exch, "tick")
             data_to_write = ticks_buffer.copy()
 
             def create_partition(data):
@@ -283,7 +218,7 @@ class NaiveFundingRateRecorder():
                 df['partition_hour'] = df['machine_ts'].dt.hour
                 return pa.Table.from_pandas(df)
 
-            asyncio.get_event_loop().run_in_executor(self.executor, append_to_parquetfile, file_path, exch, data_to_write, schema, ['symbol', 'partition_hour'], create_partition)
+            asyncio.get_event_loop().run_in_executor(self.executor, file_helper.append_to_parquetfile, file_path, exch, data_to_write, schema, ['symbol', 'partition_hour'], create_partition, logger)
             ticks_buffer.clear()
 
             if force_flush: break
@@ -339,7 +274,7 @@ class NaiveFundingRateRecorder():
                 universe_meta, universe_ctx = perps_data[0]["universe"],perps_data[1]
 
                 for meta, context in zip(universe_meta, universe_ctx):
-                    if not is_valid_decimal(context['midPx']) : continue
+                    if not number_helper.is_valid_decimal(context['midPx']) : continue
                     await self.mids.put(("hyperliquid", {"machine_ts": now, "symbol": meta['name'], "mid": Decimal(context['midPx'])}))
 
             except Exception as e: logger.error(f"collect_mids_hyperliquid: error during data parsing and processing [{exch}]: {e}", exc_info=True)
@@ -440,14 +375,14 @@ class NaiveFundingRateRecorder():
             mids_buffer.append(mids_data[1])
 
             call_time = time.monotonic()
-            if (call_time - last_call_time) > 60*2: 
+            if (call_time - last_call_time) > INTERVAL_BUFFER_INFO: 
                 logger.info(f"_consume_mids_data: Buffer sizing[{exch}] {len(mids_buffer)}/{self.batch_mids_size} mid(s) {(len(mids_buffer)*100.0)/self.batch_mids_size}%")
                 last_call_time = call_time
 
             if not force_flush and len(mids_buffer) < self.batch_mids_size: continue # Check if the buffer is ready to be written
 
             logger.info(f"_consume_mids_data: Buffer full, writing a batch of {len(mids_buffer)} mid(s) exch:{exch}...")
-            file_path = get_parquet_filename(exch, "mid")
+            file_path = file_helper.get_parquet_filename(exch, "mid")
 
             data_to_write = mids_buffer.copy()
 
@@ -457,7 +392,7 @@ class NaiveFundingRateRecorder():
                 df['partition_hour'] = df['machine_ts'].dt.hour
                 return pa.Table.from_pandas(df)
 
-            asyncio.get_event_loop().run_in_executor(self.executor, append_to_parquetfile, file_path, exch, data_to_write, schema, ['symbol', 'partition_hour'], create_partition)
+            asyncio.get_event_loop().run_in_executor(self.executor, file_helper.append_to_parquetfile, file_path, exch, data_to_write, schema, ['symbol', 'partition_hour'], create_partition, logger)
             mids_buffer.clear()
 
             if force_flush: break
@@ -485,9 +420,10 @@ class NaiveFundingRateRecorder():
 
                 for meta, context in zip(universe_meta, universe_ctx):
                     results.append({"datetime": now,  "base_currency": meta['name'], "symbol": meta['name'], "funding_rate": context['funding'], "ask": 0, "bid": 0, "mid": context['midPx'], "mark": context['markPx'], 
-                                    "oi": context['openInterest'], "volume_24h": 0, "underlying_price":0, "premium":context['premium'], "oracle": context['oraclePx'], "dayNtlVlm": context['dayNtlVlm']})
+                                    "oi": context['openInterest'], "volume_24h": 0, "underlying_price":0, "premium":context['premium'], "oracle": context['oraclePx'], "dayNtlVlm": context['dayNtlVlm'],
+                                    "funding_rate_adj": context['funding'], "fr_freq": 1})
 
-                asyncio.get_event_loop().run_in_executor(self.executor, write_to_csv, exch, results, HEADERS, "fr")
+                asyncio.get_event_loop().run_in_executor(self.executor, file_helper.write_to_csv, exch, results, HEADERS, "fr", logger)
 
             except Exception as e: logger.error(f"Error during data parsing and processing [{exch}]: {e}", exc_info=True)
             finally: 
@@ -506,6 +442,14 @@ class NaiveFundingRateRecorder():
                 logger.info(f"collect_paradex_fr: Attempting to fetch new data from: {exch}...")
 
                 exchange = self.gateway.exc_clients[exch]
+                exchange_symbol_infos = self.symbols_info[exch]
+
+                markets = await exchange.get_markets()
+                markets = markets['results']
+                for market in markets:
+                    if not market["asset_kind"] == "PERP": continue
+                    exchange_symbol_infos[market["base_currency"]] = market
+
                 market_summaries = await exchange.get_markets_summary()
                 market_summaries = market_summaries['results']
 
@@ -520,22 +464,26 @@ class NaiveFundingRateRecorder():
                     symbol = market_summary['symbol']
                     ticker = symbol.replace('-USD-PERP', '')
 
-                    ask_valid, bid_valid, fr_valid = is_valid_decimal(market_summary["ask"]), is_valid_decimal(market_summary["bid"]), is_valid_decimal(market_summary["funding_rate"])
-                    mid = (Decimal(market_summary["ask"]) + Decimal(market_summary["bid"])) / 2 if ask_valid and bid_valid else Decimal(market_summary["ask"]) if ask_valid else Decimal(market_summary["bid"])
-                    rate = Decimal(market_summary['funding_rate']) / 8 if fr_valid else 0
+                    if ticker not in exchange_symbol_infos:
+                        logger.error(f"collect_paradex_fr: {ticker} does not find into exchange_symbol_infos", exc_info=True)
+                        continue
 
-                    #ask, bid = Decimal(market_summary['ask']), Decimal(market_summary['bid'])
-                    #mid = (ask + bid) / 2                   
+                    fr_freq = exchange_symbol_infos[ticker]["funding_period_hours"]
+                    ask_valid, bid_valid, fr_valid = number_helper.is_valid_decimal(market_summary["ask"]), number_helper.is_valid_decimal(market_summary["bid"]), number_helper.is_valid_decimal(market_summary["funding_rate"])
+                    mid = (Decimal(market_summary["ask"]) + Decimal(market_summary["bid"])) / 2 if ask_valid and bid_valid else Decimal(market_summary["ask"]) if ask_valid else Decimal(market_summary["bid"])
+                    rate = Decimal(market_summary['funding_rate']) if fr_valid else 0
+                    rate_adj = rate / fr_freq                 
 
                     results.append({"datetime": now,  "base_currency": ticker, "symbol": symbol, "funding_rate": rate, "ask": Decimal(market_summary["ask"]) if ask_valid else market_summary["ask"], 
                                     "bid": Decimal(market_summary["bid"]) if bid_valid else market_summary["bid"], "mid": mid, "mark": market_summary['mark_price'], 
-                                    "oi": market_summary['open_interest'], "volume_24h": market_summary['volume_24h'], "underlying_price": market_summary['underlying_price'], "premium": 0, "oracle": 0, "dayNtlVlm": market_summary['volume_24h']})
+                                    "oi": market_summary['open_interest'], "volume_24h": market_summary['volume_24h'], "underlying_price": market_summary['underlying_price'], "premium": 0, "oracle": 0, 
+                                    "dayNtlVlm": market_summary['volume_24h'], "funding_rate_adj": rate_adj, "fr_freq": fr_freq})
                     
 
-                asyncio.get_event_loop().run_in_executor(self.executor, write_to_csv, exch, results, HEADERS, "fr")
+                asyncio.get_event_loop().run_in_executor(self.executor, file_helper.write_to_csv, exch, results, HEADERS, "fr", logger)
                 
                 
-            except Exception as e: logger.error(f"Error during data parsing and processing: {e}", exc_info=True)
+            except Exception as e: logger.error(f"collect_paradex_fr: Error during data parsing and processing: {e}", exc_info=True)
             finally: 
                 sleep_duration = max(0, INTERVAL_FUNDINGRATE_SECONDS - (time.monotonic() - start_time))
                 logger.info(f"collect_paradex_fr: Waiting for {sleep_duration} seconds before next data fetch...")
@@ -553,6 +501,14 @@ class NaiveFundingRateRecorder():
                 logger.info(f"collect_woofipro_fr: Attempting to fetch new data from: {exch}...")
 
                 exchange = self.gateway_ccxt[exch]
+                exchange_symbol_infos = self.symbols_info[exch]
+
+                results = await exchange.v1PublicGetPublicInfo()
+                available_symbols = results['data']['rows']
+                for available_symbol in available_symbols:
+                    if "PERP" not in available_symbol["symbol"]: continue
+                    exchange_symbol_infos[available_symbol["symbol"].replace("PERP_","").replace("_USDC","")] = available_symbol
+
                 results = await exchange.v1PublicGetPublicFutures()
                 futures_info = results['data']['rows']
 
@@ -564,14 +520,21 @@ class NaiveFundingRateRecorder():
                 for future_info in futures_info:
 
                     symbol, ticker = future_info['symbol'], future_info['symbol'].replace("PERP_","").replace("_USDC","")
-                    rate = Decimal(future_info['est_funding_rate']) / 8
+
+                    if ticker not in exchange_symbol_infos:
+                        logger.error(f"collect_woofipro_fr: {ticker} does not find into exchange_symbol_infos", exc_info=True)
+                        continue
+
+                    fr_freq = exchange_symbol_infos[ticker]["funding_period"]
+                    rate = future_info['est_funding_rate']
+                    rate_adj = rate / fr_freq
 
                     results.append({"datetime": now,  "base_currency": ticker, "symbol": symbol, "funding_rate": rate, "ask": 0, "bid": 0, "mid": future_info['24h_close'], "mark": future_info['mark_price'], 
                                     "oi": 0 if future_info['open_interest'] == "None" else future_info['open_interest'], "volume_24h": future_info['24h_volume'], "underlying_price": 0, "premium": 0, 
-                                    "oracle": future_info['index_price'], "dayNtlVlm": future_info['24h_amount']})
+                                    "oracle": future_info['index_price'], "dayNtlVlm": future_info['24h_amount'], "funding_rate_adj": rate_adj, "fr_freq": fr_freq})
                     
 
-                asyncio.get_event_loop().run_in_executor(self.executor, write_to_csv, exch, results, HEADERS, "fr")
+                asyncio.get_event_loop().run_in_executor(self.executor, file_helper.write_to_csv, exch, results, HEADERS, "fr", logger)
                 
                 
             except Exception as e: logger.error(f"collect_woofipro_fr: Error during data parsing and processing: {e}", exc_info=True)
