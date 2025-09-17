@@ -186,3 +186,11 @@ cython_debug/
 .cursorindexingignore
 /cr_venv
 cr_venv/ChangeLog
+cr_venv/
+apex_data/
+hyperliquid_data/
+lighter_data/
+woofipro_data/
+binance_data/
+paradex_data/
+dydx_data/

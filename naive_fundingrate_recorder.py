@@ -20,7 +20,7 @@ import math
 import ccxt
 import ccxt.pro
 
-from utils import file_helper, number_helper
+from utils import file_helper, number_helper, gateway_helper
 
 LOG_LEVEL = logging.INFO
 LOG_FILE = "naive_fundingrate_recorder.log"
@@ -53,33 +53,6 @@ import quantpylib
 from quantpylib.gateway.master import Gateway
 from quantpylib.utilities.cringbuffer_docs import RingBuffer
 from quantpylib.wrappers.paradex import endpoints as paradex_endpoints
-
-def get_ccxt_keys():
-    return {
-        "woofipro": {
-            "key":os.getenv("WOOFIPRO_KEY"),
-            "secret":os.getenv("WOOFIPRO_SECRET"),
-            "account_id": os.getenv("WOOFIPRO_ACCOUNT_ID")
-            }
-        }
-
-def get_gateway_keys():
-    config_keys = {
-        # "binance":{
-        #     "key":os.getenv("BIN_KEY"),
-        #     "secret":os.getenv("BIN_SECRET")
-        # },
-        "hyperliquid":{
-            "key":os.getenv("HPL_KEY"),
-            "secret":os.getenv("HPL_SECRET"),
-            "mode": "live"
-        },
-        "paradex":{
-               "key": os.getenv("PAREDEX_L2"),
-               "l2_secret": os.getenv("PARADEX_PRIVATE_KEY")
-        },
-    }
-    return config_keys
 
 async def wait_for_next_minute(delay=0):
     now = datetime.now()
@@ -646,15 +619,15 @@ async def main():
         # await test("woofipro", "mid", "2025-08-27", "PERP_BTC_USDC", 6)
 
         gateway = None
-        if len(get_gateway_keys()) > 0:
-            gateway = Gateway(config_keys=get_gateway_keys()) 
+        if len(gateway_helper.get_gateway_keys()) > 0:
+            gateway = Gateway(config_keys=gateway_helper.get_gateway_keys()) 
             await gateway.init_clients()
 
         #recorder = NaiveFundingRateRecorder(gateway=gateway, exchanges=["hyperliquid","paradex"], batch_mids_size=4000)
         #recorder = NaiveFundingRateRecorder(gateway=gateway, exchanges=["hyperliquid"], batch_mids_size=4000)
         #recorder = NaiveFundingRateRecorder(gateway=gateway, exchanges=["paradex"], batch_ticks_size=500, batch_mids_size=500)
         #recorder = NaiveFundingRateRecorder(gateway=gateway, exchanges=["woofipro"], ccxt_keys=get_ccxt_keys(),batch_ticks_size=100, batch_mids_size=100)
-        recorder = NaiveFundingRateRecorder(gateway=gateway, exchanges=["hyperliquid","paradex","woofipro"], ccxt_keys=get_ccxt_keys(), batch_ticks_size=10000, batch_mids_size=4000)
+        recorder = NaiveFundingRateRecorder(gateway=gateway, exchanges=["hyperliquid","paradex","woofipro"], ccxt_keys=gateway_helper.get_ccxt_keys(), batch_ticks_size=10000, batch_mids_size=4000)
         await recorder.recording()  
     except Exception as e:
         logger.critical(f"main: An unhandled critical error occurred: {e}", exc_info=True)
