@@ -4,7 +4,7 @@
     <SchemaVersion>2.0</SchemaVersion>
     <ProjectGuid>7753f976-0bcf-4eee-ad50-7e84006d3853</ProjectGuid>
     <ProjectHome>.</ProjectHome>
-    <StartupFile>naive_fundingrate_recorder.py</StartupFile>
+    <StartupFile>fundingrate_poller.py</StartupFile>
     <SearchPath>
     </SearchPath>
     <WorkingDirectory>.</WorkingDirectory>
@@ -31,6 +31,7 @@
     <Compile Include="paradex_conn.py" />
     <Compile Include="test.py" />
     <Compile Include="utils\file_helper.py" />
+    <Compile Include="utils\gateway_helper.py" />
     <Compile Include="utils\number_helper.py" />
     <Compile Include="utils\__init__.py" />
   </ItemGroup>
