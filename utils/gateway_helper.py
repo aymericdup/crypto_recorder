@@ -25,9 +25,9 @@ def get_gateway_keys():
             "secret":os.getenv("HPL_SECRET"),
             "mode": "live"
         },
-        # "paradex":{
-        #        "key": os.getenv("PAREDEX_L2"),
-        #        "l2_secret": os.getenv("PARADEX_PRIVATE_KEY")
-        # },
+         "paradex":{
+                "key": os.getenv("PAREDEX_L2"),
+                "l2_secret": os.getenv("PARADEX_PRIVATE_KEY")
+        },
     }
     return config_keys
