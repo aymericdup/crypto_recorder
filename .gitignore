@@ -193,4 +193,5 @@ woofipro_data/
 binance_data/
 paradex_data/
 dydx_data/
+drift_data/
 *.xlsx
