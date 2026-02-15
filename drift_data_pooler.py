@@ -47,38 +47,60 @@ def get_rate_history(symbol:str, type:str='borrow'):
     except Exception as e: print(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}: get_rate_history: Error fetching data for {symbol}: {e}")
     finally: return data
 
-def get_historical_market_data(symbols:[str], date_range: pd.DatetimeIndex, date_step: timedelta, date_type:str, repo_data:str, sleep_time: int) :
+def get_contracts(product_type:str) -> list[str] :
+    url = f'{URL}contracts'
+    candidates = []
+    try:
+        response =  requests.get(url)
+        all_contracts = response.json()['contracts']
+        if not all_contracts or len(all_contracts) < 1: raise(Exception('None contract returned!'))
+        candidates = [x['ticker_id'] for x in all_contracts if not product_type or product_type == x['product_type']]
+    except Exception as e : print(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}: get_contracts: Error fetching contracts: {e}")
+    finally : return candidates
+
+
+def get_historical_market_data(symbols:list[str], date_range: pd.DatetimeIndex, date_step: timedelta, data_types:list[str], repo_data:str, sleep_time: int) :
 
     for symbol in symbols:
 
-        path = os.path.join(repo_data, symbol)
-        if not os.path.exists(path): 
-            os.makedirs(path)
+        for data_type in data_types:
 
-        for date in date_range:
-            print(f'{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}: [{symbol}]Try to request {date_type} for {date.strftime('%Y-%m-%d')}')
-            df =  get_bidAskPrice_freq(symbol, date, date_step) if date_type == 'quotes' else get_data(date_type, symbol, date)
+            path = os.path.join(repo_data, data_type, symbol)
+            if not os.path.exists(path): 
+                os.makedirs(path)
 
-            if df.empty: continue
+            for date in date_range:
+                print(f'{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}: [{symbol}]Try to request {data_type} for {date.strftime('%Y-%m-%d')}')
+                df =  get_bidAskPrice_freq(symbol, date, date_step) if data_type == 'quotes' else get_data(data_type, symbol, date)
 
-            df.to_parquet(os.path.join(path, f'{date.strftime('%Y%m%d')}.parquet'), engine='pyarrow')
-            
-            time.sleep(sleep_time)
+                if df.empty: continue
+
+                df.to_parquet(os.path.join(path, f'{date.strftime('%Y%m%d')}.parquet'), engine='pyarrow')
+                
+                time.sleep(sleep_time)
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 SYMBOLS = ['SOL-PERP', 'BTC-PERP', 'ETH-PERP']
-SLEEP = 2
-DATA_TYPE = 'quotes'#'fundingRates'#'trades'
-repo = os.path.join(script_dir, 'drift_data', DATA_TYPE)
-start, end = '2025-01-01', '2025-11-27'
+SLEEP = 1 # second(s)
+DATA_TYPE = ['fundingRates','trades','quotes']
+repo = os.path.join(script_dir, 'drift_data')
+#start, end = '2025-01-01', '2025-11-27'
+start, end = '2025-01-01', '2026-02-13'
 DATE_RANGE = pd.date_range(start, end , freq='d')
 STEP = timedelta(days=1)
+PRODUCT_TYPE = 'PERP'
 
-# get_historical_market_data(SYMBOLS, DATE_RANGE, STEP, DATA_TYPE, repo, SLEEP)
+perpetuals = get_contracts(PRODUCT_TYPE)
+print(f'# {len(perpetuals)} {PRODUCT_TYPE}(s) found ')
+# exclude SOL / BTC / ETH for the first runs
+perpetuals = list(filter(lambda x : x not in SYMBOLS, perpetuals))
+get_historical_market_data(perpetuals, DATE_RANGE, STEP, DATA_TYPE, repo, SLEEP)
 
+'''
 symbol = 'USDC'
 data = get_rate_history(symbol)
 data.to_csv(f'{symbol}-rate.csv', sep=";", index=False)
+'''
 
 
 
