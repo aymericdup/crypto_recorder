@@ -934,7 +934,7 @@ def main():
     # Configuration
     DATA_FOLDER = "./binance_data"           # 📁 Configure your data folder here
     FUNDING_FOLDER = "./binance_data"     # 📁 Funding rates folder
-    INTERVAL = "1d"                         # Klines interval
+    INTERVAL = "1h"                         # Klines interval
     START_DATE = datetime(2019, 1, 1)       # Adjust as needed
     END_DATE = datetime.now()
     

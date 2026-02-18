@@ -6,6 +6,7 @@ import pytz
 import os
 import pyarrow
 import time
+from execution_profiler import ExecutionTimeProfiler
 
 URL = 'https://data.api.drift.trade/'
 
@@ -58,8 +59,10 @@ def get_contracts(product_type:str) -> list[str] :
     except Exception as e : print(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}: get_contracts: Error fetching contracts: {e}")
     finally : return candidates
 
+@ExecutionTimeProfiler
+def get_historical_market_data(symbols:list[str], date_range: pd.DatetimeIndex, date_step: timedelta, data_types:list[str], repo_data:str, sleep_time: int) -> list[str] :
 
-def get_historical_market_data(symbols:list[str], date_range: pd.DatetimeIndex, date_step: timedelta, data_types:list[str], repo_data:str, sleep_time: int) :
+    errors = []
 
     for symbol in symbols:
 
@@ -73,15 +76,21 @@ def get_historical_market_data(symbols:list[str], date_range: pd.DatetimeIndex, 
                 print(f'{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}: [{symbol}]Try to request {data_type} for {date.strftime('%Y-%m-%d')}')
                 df =  get_bidAskPrice_freq(symbol, date, date_step) if data_type == 'quotes' else get_data(data_type, symbol, date)
 
-                if df.empty: continue
+                if df.empty: 
+                    error = { 'log_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'), 'symbol': symbol, 'date': date, 'data_type':data_type }
+                    errors.append(error)
+                    print(f'{error['log_date']}: {error['symbol']} {error['date']} - no data found {error['data_type']}')
 
-                df.to_parquet(os.path.join(path, f'{date.strftime('%Y%m%d')}.parquet'), engine='pyarrow')
+                else:
+                    df.to_parquet(os.path.join(path, f'{date.strftime('%Y%m%d')}.parquet'), engine='pyarrow')
                 
                 time.sleep(sleep_time)
 
+    return errors
+
 script_dir = os.path.dirname(os.path.abspath(__file__))
-SYMBOLS = ['SOL-PERP', 'BTC-PERP', 'ETH-PERP']
-SLEEP = 1 # second(s)
+SYMBOLS = ['SOL-PERP', 'BTC-PERP', 'ETH-PERP', 'XRP-PERP', 'BNB-PERP', 'APT-PERP', 'ARB-PERP', '1KMEW-PERP', '1KMON-PERP', '1KPUMP-PERP', '1KWEN-PERP', '1MBONK-PERP', '1MPEPE-PERP']
+SLEEP = 1.5 # second(s)
 DATA_TYPE = ['fundingRates','trades','quotes']
 repo = os.path.join(script_dir, 'drift_data')
 #start, end = '2025-01-01', '2025-11-27'
@@ -89,12 +98,22 @@ start, end = '2025-01-01', '2026-02-13'
 DATE_RANGE = pd.date_range(start, end , freq='d')
 STEP = timedelta(days=1)
 PRODUCT_TYPE = 'PERP'
+BET_PRODUCT_TYPE = '-BET'
 
 perpetuals = get_contracts(PRODUCT_TYPE)
 print(f'# {len(perpetuals)} {PRODUCT_TYPE}(s) found ')
 # exclude SOL / BTC / ETH for the first runs
-perpetuals = list(filter(lambda x : x not in SYMBOLS, perpetuals))
-get_historical_market_data(perpetuals, DATE_RANGE, STEP, DATA_TYPE, repo, SLEEP)
+perpetuals = list(filter(lambda x : x not in SYMBOLS and BET_PRODUCT_TYPE not in x, perpetuals))
+perpetuals.sort()
+
+errors = get_historical_market_data(perpetuals, DATE_RANGE, STEP, DATA_TYPE, repo, SLEEP)
+nb_errors = len(errors) 
+if nb_errors > 0: 
+    print(f'################ {nb_errors} error(s) found')
+    pd.DataFrame(errors).to_csv('errors - drift scrap data.csv', sep=";")
+
+print('End of process')
+get_historical_market_data.str()
 
 '''
 symbol = 'USDC'
